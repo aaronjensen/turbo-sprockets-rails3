@@ -31,7 +31,7 @@ if defined?(Sprockets::StaticCompiler)
         logical_paths = []
         logical_paths = env.each_logical_path(paths).to_a
 
-        results = Parallel.map(logical_paths, in_processes: 4) do |logical_path|
+        results = Parallel.map(logical_paths, in_processes: 8) do |logical_path|
           result = {}
           # Fetch asset without any processing or compression,
           # to calculate a digest of the concatenated source files
