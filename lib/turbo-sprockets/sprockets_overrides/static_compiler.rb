@@ -3,6 +3,8 @@ begin
 rescue LoadError
 end
 
+require 'parallel'
+
 # Sprockets::StaticCompiler was only introduced in Rails 3.2.x
 if defined?(Sprockets::StaticCompiler)
   module Sprockets
@@ -26,33 +28,52 @@ if defined?(Sprockets::StaticCompiler)
       def compile
         start_time = Time.now.to_f
 
-        env.each_logical_path(paths) do |logical_path|
+        logical_paths = []
+        logical_paths = env.each_logical_path(paths).to_a
+
+        results = Parallel.map(logical_paths, in_processes: 4) do |logical_path|
+          result = {}
           # Fetch asset without any processing or compression,
           # to calculate a digest of the concatenated source files
+          #puts "LOOK #{Process.pid}  #{Thread.current.inspect} #{logical_path}"
           next unless asset = env.find_asset(logical_path, :process => false)
-          @source_digests[logical_path] = asset.digest
+          result[:asset_digest] = asset_digest = asset.digest
+          result[:logical_path] = logical_path
 
           # Recompile if digest has changed or compiled digest file is missing
           current_digest_file = @current_digests[logical_path]
 
-          if @source_digests[logical_path] != @current_source_digests[logical_path] ||
+          if asset_digest != @current_source_digests[logical_path] ||
              !(current_digest_file && File.exists?("#{@target}/#{current_digest_file}"))
 
             if asset = env.find_asset(logical_path)
-              digest_path = write_asset(asset)
-              @digests[asset.logical_path] = digest_path
-              @digests[aliased_path_for(asset.logical_path)] = digest_path
-              # Update current_digests with new hash, for future assets to reference
-              @current_digests[asset.logical_path] = asset.digest_path
+              result[:asset_logical_path] = asset.logical_path
+              result[:digest_path] = write_asset(asset)
+              result[:asset_digest_path] = asset.digest_path
             end
           else
             # Set asset file from manifest.yml
+            result[:logical_path] = logical_path
             digest_path = @current_digests[logical_path]
-            @digests[logical_path] = digest_path
-            @digests[aliased_path_for(logical_path)] = digest_path
 
             env.logger.debug "Not compiling #{logical_path}, sources digest has not changed " <<
-                             "(#{@source_digests[logical_path][0...7]})"
+                             "(#{asset_digest[0...7]})"
+          end
+
+          result
+        end
+
+        results.compact.each do |result|
+          asset_logical_path = result[:asset_logical_path]
+          logical_path = asset_logical_path || result[:logical_path]
+          @source_digests[logical_path] = result[:asset_digest]
+
+          digest_path = result[:digest_path] || @current_digests[logical_path]
+          @digests[logical_path] = digest_path
+          @digests[aliased_path_for(logical_path)] = digest_path
+          # Update current_digests with new hash, for future assets to reference
+          if result[:asset_digest_path]
+            @current_digests[asset_logical_path] = result[:asset_digest_path]
           end
         end
 
