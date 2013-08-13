@@ -31,36 +31,14 @@ if defined?(Sprockets::StaticCompiler)
         logical_paths = []
         logical_paths = env.each_logical_path(paths).to_a
 
+        results = []
+        sprites = logical_paths.delete("sprites.css")
+        if sprites
+          results << process_logical_path(sprites)
+        end
+
         results = Parallel.map(logical_paths, in_processes: ENV.fetch("PARALLEL_SPROCKETS_PROCESSORS", Parallel.processor_count).to_i) do |logical_path|
-          result = {}
-          # Fetch asset without any processing or compression,
-          # to calculate a digest of the concatenated source files
-          #puts "LOOK #{Process.pid}  #{Thread.current.inspect} #{logical_path}"
-          next unless asset = env.find_asset(logical_path, :process => false)
-          result[:asset_digest] = asset_digest = asset.digest
-          result[:logical_path] = logical_path
-
-          # Recompile if digest has changed or compiled digest file is missing
-          current_digest_file = @current_digests[logical_path]
-
-          if asset_digest != @current_source_digests[logical_path] ||
-             !(current_digest_file && File.exists?("#{@target}/#{current_digest_file}"))
-
-            if asset = env.find_asset(logical_path)
-              result[:asset_logical_path] = asset.logical_path
-              result[:digest_path] = write_asset(asset)
-              result[:asset_digest_path] = asset.digest_path
-            end
-          else
-            # Set asset file from manifest.yml
-            result[:logical_path] = logical_path
-            digest_path = @current_digests[logical_path]
-
-            env.logger.debug "Not compiling #{logical_path}, sources digest has not changed " <<
-                             "(#{asset_digest[0...7]})"
-          end
-
-          result
+          process_logical_path(logical_path)
         end
 
         results.compact.each do |result|
@@ -96,6 +74,38 @@ if defined?(Sprockets::StaticCompiler)
 
         elapsed_time = ((Time.now.to_f - start_time) * 1000).to_i
         env.logger.debug "Processed #{'non-' unless @digest}digest assets in #{elapsed_time}ms"
+      end
+
+      def process_logical_path(logical_path)
+        result = {}
+        # Fetch asset without any processing or compression,
+        # to calculate a digest of the concatenated source files
+        #puts "LOOK #{Process.pid}  #{Thread.current.inspect} #{logical_path}"
+        return unless asset = env.find_asset(logical_path, :process => false)
+        result[:asset_digest] = asset_digest = asset.digest
+        result[:logical_path] = logical_path
+
+        # Recompile if digest has changed or compiled digest file is missing
+        current_digest_file = @current_digests[logical_path]
+
+        if asset_digest != @current_source_digests[logical_path] ||
+          !(current_digest_file && File.exists?("#{@target}/#{current_digest_file}"))
+
+          if asset = env.find_asset(logical_path)
+            result[:asset_logical_path] = asset.logical_path
+            result[:digest_path] = write_asset(asset)
+            result[:asset_digest_path] = asset.digest_path
+          end
+        else
+          # Set asset file from manifest.yml
+          result[:logical_path] = logical_path
+          digest_path = @current_digests[logical_path]
+
+          env.logger.debug "Not compiling #{logical_path}, sources digest has not changed " <<
+          "(#{asset_digest[0...7]})"
+        end
+
+        result
       end
 
       def write_sources_manifest(source_digests)
